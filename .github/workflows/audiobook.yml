@@ -1,0 +1,59 @@
+name: audiobook
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Target minutes when the caption has no number"
+        default: "120"
+
+# One book at a time: overlapping runs queue instead of running in parallel.
+concurrency:
+  group: audiobook-main
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      MINUTES_OVERRIDE: ${{ inputs.minutes }}
+      FISH_API_KEY: ${{ secrets.FISH_API_KEY }}
+      FISH_MODEL: ${{ secrets.FISH_MODEL }}
+      FISH_VOICE_TS2: ${{ secrets.FISH_VOICE_TS2 }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      NIM_API_KEY: ${{ secrets.NIM_API_KEY }}
+      NIM_API_KEY_2: ${{ secrets.NIM_API_KEY_2 }}
+      KILO_API_KEY: ${{ secrets.KILO_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            state
+            work
+          key: audiobook-state-${{ github.run_id }}
+          restore-keys: audiobook-state-
+      - run: python -m pipeline.main
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            state
+            work
+          key: audiobook-state-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: audiobook-parts-${{ github.run_id }}
+          path: work/*/part*.m4b
+          retention-days: 7
+          if-no-files-found: ignore

@@ -1,0 +1,38 @@
+name: cleanup
+
+# Weekly prune: resume-state caches older than 7 days, stray binaries in the tree.
+# (Artifacts self-expire via retention-days; Telegram history is the archive.)
+on:
+  schedule:
+    - cron: "0 3 * * 0"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: prune caches older than 7 days
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cutoff=$(date -u -d "7 days ago" +%Y-%m-%dT%H:%M:%SZ)
+          gh actions-cache list --limit 100 --json key,createdAt \
+            --jq ".[] | select(.createdAt < \"$cutoff\") | .key" |
+          while read -r key; do
+            [ -n "$key" ] && gh actions-cache delete "$key" --confirm || true
+          done
+      - name: remove stray binaries
+        run: |
+          found=$(git ls-files "*.epub" "*.m4b" "*.mp3" | head -20)
+          if [ -n "$found" ]; then
+            echo "$found" | xargs git rm -q
+            git config user.name "audiobook-bot" && git config user.email "bot@local"
+            git commit -qm "cleanup: remove stray binaries" && git push || true
+          else
+            echo "tree clean"
+          fi
