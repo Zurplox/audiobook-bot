@@ -99,6 +99,9 @@ def run_phases(s):
         s["phase"] = "extracted"
         print(f"extracted {len(chapters)} chapters")
     if s["phase"] == "extracted":
+        tg.send("👁️ Reading %d figures for verbal description…"
+                % sum(len(c["images"]) for c in
+                      json.loads((wd / "chapters.json").read_text(encoding="utf-8"))))
         raw = json.loads((wd / "chapters.json").read_text(encoding="utf-8"))
         chapters = [{"title": c["title"], "lines": c["lines"],
                      "images": [{"n": i["n"], "ext": i["ext"], "caption": i["caption"],
@@ -109,12 +112,14 @@ def run_phases(s):
                                           encoding="utf-8")
         s["phase"] = "vision_done"
     if s["phase"] == "vision_done":
+        tg.send("🧠 Summarization starting (target ~%d min)…" % s["minutes"])
         chapters = json.loads((wd / "chapters.json").read_text(encoding="utf-8"))
         for ev in summarize.summarize(s, chapters, wd):
             state.save(s)
             print("progress:", ev)
         s["phase"] = "summarized"
     if s["phase"] == "summarized":
+        tg.send("🎙️ Script ready — synthesizing audio, part 1 coming next…")
         md = (wd / "script.md").read_text(encoding="utf-8-sig")
         sections = synth.split_sections(md)
         print(len(sections), "TTS sections")

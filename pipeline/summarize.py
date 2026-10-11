@@ -6,7 +6,7 @@ closing = fixed template. No Harvin analogies in the auto pipeline."""
 import json
 import re
 
-from . import config, extract, llm
+from . import config, extract, llm, tg
 
 MAP_SYS = ("You condense nonfiction book chapters for an audiobook summary. "
            "Simple plain language, easy to follow by ear. Keep the author's key "
@@ -57,6 +57,9 @@ def summarize(state, chapters, workdir):
         state["chunks_done"][c["id"]] = out
         state["fail_log"] = fails
         yield ("map", c["id"], rung)
+        done_n = len(state["chunks_done"])
+        if done_n % 5 == 0 or done_n == len(chunks):
+            tg.send(f"🧠 Summarizing — {done_n}/{len(chunks)} chunks done")
 
     # reduce per chapter
     narrations = {}
