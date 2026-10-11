@@ -51,7 +51,7 @@ def summarize(state, chapters, workdir):
         msgs = [{"role": "system", "content": MAP_SYS},
                 {"role": "user", "content": _map_prompt(c["text"], words)}]
         out, rung, fails = llm.call_chain(
-            msgs, max_tokens=4000,
+            msgs, max_tokens=config.MAP_MAX_TOKENS,
             min_len=max(config.MAP_MIN_ABS, len(c["text"]) // config.MAP_MIN_RATIO),
             tag=f"map-{c['id']}")
         state["chunks_done"][c["id"]] = out
@@ -75,7 +75,7 @@ def summarize(state, chapters, workdir):
                  f"Turn these summaries of the chapter '{ch['title']}' into flowing "
                  f"narration:\n\n{src}"}]
         out, rung, fails = llm.call_chain(
-            msgs, max_tokens=8000,
+            msgs, max_tokens=config.REDUCE_MAX_TOKENS,
             min_len=max(400, len(src) // 8), tag=f"reduce-{key}")
         state.setdefault("chapters_done", {})[key] = out
         state["fail_log"] = fails

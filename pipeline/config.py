@@ -71,5 +71,10 @@ EST_BYTES_PER_CHAR = 1.0     # synth size estimate (conservative)
 MAX_SECTION_CHARS = 60000    # bigger sections pre-split (guard, rarely triggers)
 VISION_TRIES = 3
 VISION_IMG_MAX = 1024        # downscale longest side
+# Output budgets must fit reasoning trace + content: all chain models reason,
+# and a starved budget returns EMPTY content (13h lesson 2026-10-11: 0<min_len
+# on every rung). Map content need ~3.5k tokens max; reasoning takes ~3k.
+MAP_MAX_TOKENS = 10000
+REDUCE_MAX_TOKENS = 12000
 TG_MAX_DOWNLOAD_MB = 20      # Telegram bot getFile cap
 STUCK_ALERT_CYCLES = 3       # consecutive stuck cycles before "manual look" alert
