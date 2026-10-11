@@ -135,8 +135,12 @@ def finish(s):
     tg.send(f"✅ '{s['title']}' complete — {len(parts)} part(s), {total:.0f} min total.")
     wd = config.WORK_DIR / s["book_id"]
     shutil.rmtree(wd, ignore_errors=True)
+    done_name = s["file_name"]
+    queue = [e for e in s["queue"] if e.get("name") != done_name]
+    if len(queue) != len(s["queue"]):
+        tg.send(f"🧹 Skipped duplicate upload of '{done_name}' — you already have it.")
     nxt = state.blank()
-    nxt.update({"tg_offset": s["tg_offset"], "queue": s["queue"],
+    nxt.update({"tg_offset": s["tg_offset"], "queue": queue,
                 "noticed": s["noticed"][-20:]})
     s.clear(); s.update(nxt)
     if s["queue"]:
