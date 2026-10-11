@@ -23,32 +23,41 @@ def poll(s):
     for u in tg.get_updates(s["tg_offset"]):
         s["tg_offset"] = u["update_id"] + 1
         changed = True
-        msg = u.get("message", {})
-        doc = msg.get("document")
-        if not doc:
-            continue  # plain text: silent skip
-        fid, uniq = doc["file_id"], doc.get("file_unique_id", fid)
-        name = doc.get("file_name", "")
-        if not name.lower().endswith(".epub"):
-            if uniq not in s["noticed"]:
-                tg.send(f"📚 I only take .epub files — '{name}' skipped.")
-                s["noticed"].append(uniq)
-            continue
-        if doc.get("file_size", 0) / 1024 / 1024 > config.TG_MAX_DOWNLOAD_MB:
-            tg.send(f"📦 '{name}' is over Telegram's 20 MB bot-download cap — "
-                    f"please send a smaller epub.")
-            continue
-        entry = {"file_id": fid, "name": name,
-                 "caption": (msg.get("caption") or ""),
-                 "override": os.environ.get("MINUTES_OVERRIDE", "")}
-        if s["book_id"] is None:
-            start_book(s, entry)
-        elif len(s["queue"]) < 5:
-            s["queue"].append(entry)
-            tg.send(f"📥 '{name}' queued — current book finishes first.")
-        else:
-            tg.send(f"⏳ Queue is full (5) — send '{name}' again later.")
+        try:
+            handle_update(s, u)
+        except Exception as e:
+            print(f"update {u['update_id']} failed ({e!r}) — skipped with notice")
+            tg.send("⚠️ Couldn't read that file — skipped. Send the .epub again?")
     return changed
+
+
+def handle_update(s, u):
+    msg = u.get("message", {})
+    doc = msg.get("document")
+    if not doc:
+        return  # plain text: silent skip
+    fid = doc["file_id"]
+    uniq = doc.get("file_unique_id", fid)
+    name = doc.get("file_name", "")
+    if not name.lower().endswith(".epub"):
+        if uniq not in s["noticed"]:
+            tg.send(f"📚 I only take .epub files — '{name}' skipped.")
+            s["noticed"].append(uniq)
+        return
+    if doc.get("file_size", 0) / 1024 / 1024 > config.TG_MAX_DOWNLOAD_MB:
+        tg.send(f"📦 '{name}' is over Telegram's 20 MB bot-download cap — "
+                f"please send a smaller epub.")
+        return
+    entry = {"file_id": fid, "name": name,
+             "caption": (msg.get("caption") or ""),
+             "override": os.environ.get("MINUTES_OVERRIDE", "")}
+    if s["book_id"] is None:
+        start_book(s, entry)
+    elif len(s["queue"]) < 5:
+        s["queue"].append(entry)
+        tg.send(f"📥 '{name}' queued — current book finishes first.")
+    else:
+        tg.send(f"⏳ Queue is full (5) — send '{name}' again later.")
 
 
 def start_book(s, entry):
