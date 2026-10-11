@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 330
     env:
       MINUTES_OVERRIDE: ${{ inputs.minutes }}
+      PYTHONUNBUFFERED: "1"
       FISH_API_KEY: ${{ secrets.FISH_API_KEY }}
       FISH_MODEL: ${{ secrets.FISH_MODEL }}
       FISH_VOICE_TS2: ${{ secrets.FISH_VOICE_TS2 }}

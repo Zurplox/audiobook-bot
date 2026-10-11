@@ -3,7 +3,11 @@ import io
 import re
 import zipfile
 import xml.etree.ElementTree as ET
+import warnings
 from bs4 import BeautifulSoup
+from bs4 import XMLParsedAsHTMLWarning
+
+warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 from PIL import Image
 
 BLOCK = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "figcaption",
