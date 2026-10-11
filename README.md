@@ -5,7 +5,7 @@ Telegram is the entire UI: send an `.epub` to the bot, receive `.m4b` parts back
 
 ## Triggers
 
-- **Automatic**: scheduled workflow polls the bot every 30 min for new epubs.
+- **Automatic**: scheduled workflow polls the bot every hour for new epubs.
 - **Manual**: Actions tab → `audiobook` → Run workflow (optional `minutes` override).
 - **Upload**: send the `.epub` file to the bot. Put target minutes in the caption
   (e.g. `90`), or leave empty for the 120-min default. Max 20 MB (Telegram
