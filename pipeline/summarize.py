@@ -8,8 +8,9 @@ import re
 
 from . import config, extract, llm, tg
 
-MAP_SYS = ("You condense nonfiction book chapters for an audiobook summary. "
-           "Simple plain language, easy to follow by ear. Keep the author's key "
+_SHORT = {"nim-glm": "GLM", "kilo": "Kilo", "nim-ds": "DeepSeek", "or-nemo": "Nemotron"}
+
+MAP_SYS = ("You condense nonfiction book chapters for an audiobook summary. "           "Simple plain language, easy to follow by ear. Keep the author's key "
            "ideas, examples and numbers in their original order. When you see a "
            "[FIGURE n: ...] marker, narrate it verbally in 1-3 sentences as part "
            "of the flow - never write 'see figure' and never drop it. No intro "
@@ -56,13 +57,16 @@ def summarize(state, chapters, workdir):
             tag=f"map-{c['id']}", notified=state.setdefault("notified_rungs", []))
         state["chunks_done"][c["id"]] = out
         state["fail_log"] = fails
+        rc = state.setdefault("rung_counts", {})
+        rc[rung] = rc.get(rung, 0) + 1
         if config.CHUNK_SPAM and fails:
             detail = " → ".join(f"{k}×{v}" for k, v in fails.items()) + f" → {rung} ok"
             tg.send(f"🧩 map-{c['id']}: {detail}")
         yield ("map", c["id"], rung)
         done_n = len(state["chunks_done"])
         if done_n % 5 == 0 or done_n == len(chunks):
-            tg.send(f"🧠 Summarizing — {done_n}/{len(chunks)} chunks done")
+            parts = " · ".join(f"{_SHORT.get(k, k)} {v}" for k, v in sorted(rc.items()))
+            tg.send(f"🧠 Summarizing — {done_n}/{len(chunks)} chunks ({parts})")
 
     # reduce per chapter
     narrations = {}
