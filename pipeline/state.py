@@ -8,7 +8,6 @@ def blank():
     return {
         "book_id": None, "phase": "idle", "tg_offset": 0,
         "title": "", "author": "", "minutes": config.DEFAULT_MINUTES,
-        "tg_file_id": "",
         "file_name": "", "queue": [], "noticed": [],
         "chunks": [], "chunks_done": {}, "script_chars": 0,
         "chunk_chars": config.CHUNK_CHARS,

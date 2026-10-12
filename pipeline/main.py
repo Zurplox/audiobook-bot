@@ -3,10 +3,8 @@ Every phase checkpoints; a crashed run resumes mid-book. Exit 0 always
 (stuck runs alert via Telegram and continue on the next cycle)."""
 import json
 import os
-import pathlib
 import re
 import shutil
-import subprocess
 import sys
 
 from . import config, state, tg, extract, vision, summarize, synth, deliver
@@ -79,68 +77,12 @@ def start_book(s, entry):
     fresh.update({"book_id": book_id, "phase": "downloaded",
                   "tg_offset": s["tg_offset"], "queue": s["queue"],
                   "noticed": s["noticed"][-20:],
-                  "minutes": mins, "tg_file_id": entry["file_id"],
+                  "minutes": mins,
                   "file_name": entry["name"], "title": entry["name"]})
     s.clear(); s.update(fresh)
     tg.send(f"📖 Received '{entry['name']}' ({mb:.1f} MB) — "
             f"building a ~{s['minutes']} min audiobook. I'll send each part here as it's done.")
     print(f"started {book_id}: {entry['name']}, {s['minutes']} min")
-
-
-def _save_chapters(wd, chapters):
-    (wd / "chapters.json").write_text(json.dumps(
-        [{"title": c["title"], "lines": c["lines"], "images": [
-            {"n": i["n"], "ext": i["ext"], "caption": i["caption"],
-             "context": i["context"]} for i in c["images"]]} for c in chapters],
-        ensure_ascii=False), encoding="utf-8")
-
-
-def ensure_work(s):
-    """Disaster path: repo-state survived but work files are gone (cache wiped).
-    Re-fetch the epub from Telegram and re-extract. Summaries already in state
-    are reused (same chunk size -> same ids); phase resets so vision re-runs."""
-    wd = config.WORK_DIR / s["book_id"]
-    if (wd / "chapters.json").exists():
-        return
-    if not s.get("tg_file_id"):
-        raise RuntimeError("work files missing and no Telegram file id — send the book again")
-    wd.mkdir(parents=True, exist_ok=True)
-    ok, _ = tg.download_document(s["tg_file_id"], wd / "book.epub")
-    if not ok:
-        raise RuntimeError("epub re-download failed — send the book again")
-    meta, chapters = extract.extract(wd / "book.epub", wd / "images")
-    _save_chapters(wd, chapters)
-    s["phase"] = "extracted"
-    tg.send("🧠 Checkpoint cache was wiped — re-fetched the book, resuming from saved summaries.")
-    print(f"rebuilt work files for {s['book_id']}: {len(chapters)} chapters")
-
-
-def _git(root, *args):
-    return subprocess.run(["git", *args], capture_output=True, text=True, cwd=str(root))
-
-
-def commit_state(s, root=None):
-    """Disaster-recovery copy: commit state.json to the repo (Actions only).
-    Cache stays primary. Single writer + fresh clone per run => no conflicts
-    in practice; any failure is non-fatal (runner is disposable). Never raises."""
-    try:
-        if os.environ.get("GITHUB_ACTIONS") != "true":
-            return
-        root = pathlib.Path(root or config.ROOT)
-        if not (root / "state" / "state.json").exists():
-            return
-        st = _git(root, "status", "--porcelain", "state/state.json")
-        if "state" not in st.stdout:
-            return  # nothing new (covers both `?? state/` and ` M state/state.json`)
-        _git(root, "pull", "--rebase", "--autostash")
-        _git(root, "add", "state/state.json")
-        _git(root, "-c", "user.name=audiobook-bot", "-c", "user.email=bot@local",
-             "commit", "-qm", f"checkpoint: {s.get('book_id') or 'idle'} {s.get('phase')}")
-        p = _git(root, "-c", "user.name=audiobook-bot", "-c", "user.email=bot@local",
-                 "push", "origin", "HEAD:main")
-        print("checkpoint commit:", "pushed" if p.returncode == 0 else p.stderr[-120:])
-    except Exception as e:
-        print("checkpoint commit skipped:", str(e)[:120])
 
 
 def run_phases(s):
@@ -149,7 +91,11 @@ def run_phases(s):
         meta, chapters = extract.extract(wd / "book.epub", wd / "images")
         s["title"] = meta.get("title") or s["file_name"].rsplit(".", 1)[0]
         s["author"] = meta.get("creator", "")
-        _save_chapters(wd, chapters)
+        (wd / "chapters.json").write_text(json.dumps(
+            [{"title": c["title"], "lines": c["lines"], "images": [
+                {"n": i["n"], "ext": i["ext"], "caption": i["caption"],
+                 "context": i["context"]} for i in c["images"]]} for c in chapters],
+            ensure_ascii=False), encoding="utf-8")
         s["phase"] = "extracted"
         print(f"extracted {len(chapters)} chapters")
     if s["phase"] == "extracted":
@@ -220,29 +166,25 @@ def alert_stuck(s, reason):
 
 def main():
     s = state.load()
+    print("health:", end=" ")
+    from . import llm
+    llm.health_check()  # log only — the chain itself handles failures
+    poll(s)
+    state.save(s)
+    if s["book_id"] is None:
+        print("idle, offset", s["tg_offset"])
+        return
     try:
-        print("health:", end=" ")
-        from . import llm
-        llm.health_check()  # log only — the chain itself handles failures
-        poll(s)
+        run_phases(s)
+        s["stuck"] = False; s["cycles_failed"] = 0
         state.save(s)
-        if s["book_id"] is None:
-            print("idle, offset", s["tg_offset"])
-            return
-        ensure_work(s)  # no-op unless cache was wiped mid-book
-        try:
-            run_phases(s)
-            s["stuck"] = False; s["cycles_failed"] = 0
+        if s["phase"] == "done":
+            finish(s)
             state.save(s)
-            if s["phase"] == "done":
-                finish(s)
-                state.save(s)
-        except Exception as e:
-            print("STUCK:", str(e)[:300])
-            alert_stuck(s, str(e)[:200])
-            state.save(s)
-    finally:
-        commit_state(s)  # repo copy of checkpoints (cache stays primary)
+    except Exception as e:
+        print("STUCK:", str(e)[:300])
+        alert_stuck(s, str(e)[:200])
+        state.save(s)
 
 
 if __name__ == "__main__":
