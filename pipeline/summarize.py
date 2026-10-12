@@ -56,6 +56,9 @@ def summarize(state, chapters, workdir):
             tag=f"map-{c['id']}", notified=state.setdefault("notified_rungs", []))
         state["chunks_done"][c["id"]] = out
         state["fail_log"] = fails
+        if config.CHUNK_SPAM and fails:
+            detail = " → ".join(f"{k}×{v}" for k, v in fails.items()) + f" → {rung} ok"
+            tg.send(f"🧩 map-{c['id']}: {detail}")
         yield ("map", c["id"], rung)
         done_n = len(state["chunks_done"])
         if done_n % 5 == 0 or done_n == len(chunks):
@@ -81,6 +84,9 @@ def summarize(state, chapters, workdir):
         state.setdefault("chapters_done", {})[key] = out
         state["fail_log"] = fails
         narrations[ci] = out
+        if config.CHUNK_SPAM and fails:
+            detail = " → ".join(f"{k}×{v}" for k, v in fails.items()) + f" → {rung} ok"
+            tg.send(f"🧩 reduce-{key}: {detail}")
         yield ("reduce", key, rung)
 
     title, author = state["title"], state["author"]
