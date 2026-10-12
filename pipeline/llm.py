@@ -11,6 +11,14 @@ from . import config
 
 QUOTA_HINTS = ("429", "rate", "quota", "limit", "credit", "balance", "402", "insufficient")
 
+# One-shot rung announcements (first exhaustion per book only — not per chunk).
+RUNG_NOTES = {
+    "nim-glm": "🔄 GLM-Flash gave up after 5 tries — continuing on Kilo fallback.",
+    "kilo": "🔄 Kilo gave up — continuing on DeepSeek (separate quota).",
+    "nim-ds": "❄️ DeepSeek failing — cooldown retries running, OpenRouter Nemotron "
+              "next if needed. Book still going, just slow.",
+}
+
 
 def _post(base, model, key, messages, max_tokens, timeout=300):
     body = json.dumps({"model": model, "messages": messages,
@@ -36,8 +44,10 @@ def _is_quota(err_text):
     return any(h in low for h in QUOTA_HINTS)
 
 
-def call_chain(messages, max_tokens, min_len, tag="chunk"):
-    """Returns (text, rung_used, fail_counts). Raises RuntimeError if all rungs fail."""
+def call_chain(messages, max_tokens, min_len, tag="chunk", notified=None):
+    """Returns (text, rung_used, fail_counts). Raises RuntimeError if all rungs fail.
+    notified: persistent list (in state) — each rung announces once per book."""
+    from . import tg  # late import: avoids cycle at module load
     fail_counts = {}
     for name, base, model, key, tries, waits in config.CHAIN:
         if not key:
@@ -66,6 +76,14 @@ def call_chain(messages, max_tokens, min_len, tag="chunk"):
             fail_counts[name] = fail_counts.get(name, 0) + 1
             if a < len(waits):
                 time.sleep(waits[a])
+        # rung exhausted/abandoned without success -> next rung. Announce once.
+        if notified is not None and name not in notified and name in RUNG_NOTES:
+            notified.append(name)
+            print(f"{tag}: announcing {name} fallback")
+            try:
+                tg.send(RUNG_NOTES[name])
+            except Exception as e:
+                print(f"announce failed: {e}")
     raise RuntimeError(f"all rungs failed for {tag}: {fail_counts}")
 
 

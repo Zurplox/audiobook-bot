@@ -53,7 +53,7 @@ def summarize(state, chapters, workdir):
         out, rung, fails = llm.call_chain(
             msgs, max_tokens=config.MAP_MAX_TOKENS,
             min_len=max(config.MAP_MIN_ABS, len(c["text"]) // config.MAP_MIN_RATIO),
-            tag=f"map-{c['id']}")
+            tag=f"map-{c['id']}", notified=state.setdefault("notified_rungs", []))
         state["chunks_done"][c["id"]] = out
         state["fail_log"] = fails
         yield ("map", c["id"], rung)
@@ -76,7 +76,8 @@ def summarize(state, chapters, workdir):
                  f"narration:\n\n{src}"}]
         out, rung, fails = llm.call_chain(
             msgs, max_tokens=config.REDUCE_MAX_TOKENS,
-            min_len=max(400, len(src) // 8), tag=f"reduce-{key}")
+            min_len=max(400, len(src) // 8), tag=f"reduce-{key}",
+            notified=state.setdefault("notified_rungs", []))
         state.setdefault("chapters_done", {})[key] = out
         state["fail_log"] = fails
         narrations[ci] = out
