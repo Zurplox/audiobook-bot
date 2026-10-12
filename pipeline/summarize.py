@@ -1,10 +1,12 @@
 """Map-reduce summarization.
-Map: chapter chunks -> chunk summaries (checkpointed per chunk).
-Reduce: per-chapter assembly (small outputs any fallback model can emit).
+Map runs on a worker pool (independent read-only LLM calls); reduce per chapter
+on a smaller pool. Order preserved by id at assembly. Checkpoints per unit.
 Open/close need no LLM calls: cold open = first chapter starts immediately,
 closing = fixed template. No Harvin analogies in the auto pipeline."""
+import concurrent.futures as cf
 import json
 import re
+import threading
 
 from . import config, extract, llm, tg
 
@@ -29,25 +31,27 @@ REDUCE_SYS = ("You assemble chapter summaries into flowing audiobook narration. 
               "no markdown headings, no intro, no closing sentence.")
 
 
-def build_chunks(chapters):
+def build_chunks(chapters, limit=None):
     chunks = []
     for ci, ch in enumerate(chapters):
-        for c in extract.chunks_from_lines(ch["lines"], config.CHUNK_CHARS):
+        for c in extract.chunks_from_lines(ch["lines"], limit or config.CHUNK_CHARS):
             chunks.append({"id": f"c{len(chunks)}", "ch": ci, "text": c})
     return chunks
 
 
 def summarize(state, chapters, workdir):
     """Runs map + reduce with per-unit checkpoints in state. Returns script md."""
-    chunks = build_chunks(chapters)
+    # In-flight books keep their original chunk size (else checkpoints wipe).
+    cchars = state.get("chunk_chars", 10000)
+    chunks = build_chunks(chapters, cchars)
     if not state["chunks"] or len(state["chunks"]) != len(chunks):
         state["chunks"] = [{"id": c["id"], "ch": c["ch"]} for c in chunks]
         state["chunks_done"] = {}
-    by_id = {c["id"]: c for c in chunks}
+    state["chunk_chars"] = cchars
+    lock = threading.Lock()
+    pending = [c for c in chunks if c["id"] not in state["chunks_done"]]
 
-    for c in chunks:
-        if c["id"] in state["chunks_done"]:
-            continue
+    def do_map(c):
         words = max(120, len(c["text"]) // 12)
         msgs = [{"role": "system", "content": MAP_SYS},
                 {"role": "user", "content": _map_prompt(c["text"], words)}]
@@ -55,28 +59,32 @@ def summarize(state, chapters, workdir):
             msgs, max_tokens=config.MAP_MAX_TOKENS,
             min_len=max(config.MAP_MIN_ABS, len(c["text"]) // config.MAP_MIN_RATIO),
             tag=f"map-{c['id']}", notified=state.setdefault("notified_rungs", []))
-        state["chunks_done"][c["id"]] = out
-        state["fail_log"] = fails
-        rc = state.setdefault("rung_counts", {})
-        rc[rung] = rc.get(rung, 0) + 1
+        with lock:
+            state["chunks_done"][c["id"]] = out
+            state["fail_log"] = fails
+            rc = state.setdefault("rung_counts", {})
+            rc[rung] = rc.get(rung, 0) + 1
+            done_n, total = len(state["chunks_done"]), len(chunks)
+            parts = " · ".join(f"{_SHORT.get(k, k)} {v}" for k, v in sorted(rc.items()))
         if config.CHUNK_SPAM and fails:
             detail = " → ".join(f"{k}×{v}" for k, v in fails.items()) + f" → {rung} ok"
             tg.send(f"🧩 map-{c['id']}: {detail}")
-        yield ("map", c["id"], rung)
-        done_n = len(state["chunks_done"])
-        if done_n % 5 == 0 or done_n == len(chunks):
-            parts = " · ".join(f"{_SHORT.get(k, k)} {v}" for k, v in sorted(rc.items()))
-            tg.send(f"🧠 Summarizing — {done_n}/{len(chunks)} chunks ({parts})")
+        tick = (f"🧠 Summarizing — {done_n}/{total} chunks ({parts})"
+                if done_n % 5 == 0 or done_n == total else None)
+        return (c["id"], rung, tick)
 
-    # reduce per chapter
-    narrations = {}
-    for ci, ch in enumerate(chapters):
+    with cf.ThreadPoolExecutor(max_workers=config.MAP_WORKERS) as ex:
+        for fut in cf.as_completed([ex.submit(do_map, c) for c in pending]):
+            cid, rung, tick = fut.result()
+            if tick:
+                tg.send(tick)
+            yield ("map", cid, rung)
+
+    # reduce per chapter (smaller pool — longer calls)
+    def do_reduce(job):
+        ci, ch = job
         key = f"ch{ci}"
-        if key in state.get("chapters_done", {}):
-            narrations[ci] = state["chapters_done"][key]
-            continue
-        parts = [state["chunks_done"][c["id"]] for c in chunks if c["ch"] == ci]
-        src = "\n\n".join(parts)
+        src = "\n\n".join(state["chunks_done"][c["id"]] for c in chunks if c["ch"] == ci)
         msgs = [{"role": "system", "content": REDUCE_SYS},
                 {"role": "user", "content":
                  f"Turn these summaries of the chapter '{ch['title']}' into flowing "
@@ -85,13 +93,22 @@ def summarize(state, chapters, workdir):
             msgs, max_tokens=config.REDUCE_MAX_TOKENS,
             min_len=max(400, len(src) // 8), tag=f"reduce-{key}",
             notified=state.setdefault("notified_rungs", []))
-        state.setdefault("chapters_done", {})[key] = out
-        state["fail_log"] = fails
-        narrations[ci] = out
+        with lock:
+            state.setdefault("chapters_done", {})[key] = out
+            state["fail_log"] = fails
         if config.CHUNK_SPAM and fails:
             detail = " → ".join(f"{k}×{v}" for k, v in fails.items()) + f" → {rung} ok"
             tg.send(f"🧩 reduce-{key}: {detail}")
-        yield ("reduce", key, rung)
+        return (ci, rung)
+
+    jobs = [(ci, ch) for ci, ch in enumerate(chapters)
+            if f"ch{ci}" not in state.get("chapters_done", {})]
+    with cf.ThreadPoolExecutor(max_workers=config.REDUCE_WORKERS) as ex:
+        for fut in cf.as_completed([ex.submit(do_reduce, j) for j in jobs]):
+            ci, rung = fut.result()
+            yield ("reduce", f"ch{ci}", rung)
+
+    narrations = {ci: state["chapters_done"][f"ch{ci}"] for ci in range(len(chapters))}
 
     title, author = state["title"], state["author"]
     md = [f"# {title} — {author}".strip(" —"), ""]

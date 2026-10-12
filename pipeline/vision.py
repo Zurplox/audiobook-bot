@@ -1,6 +1,7 @@
 """Vision descriptions for kept figures. Primary: NIM llama-3.2-11b-vision.
 Falls back per-image to tier-1 (caption/context) — vision never blocks the book."""
 import base64
+import concurrent.futures as cf
 import io
 import json
 import time
@@ -67,10 +68,25 @@ def _describe(img_bytes, caption, context):
 def enrich(chapters, img_dir):
     """Replace [FIGURE n ...] markers with vision descriptions (tier 2).
     Tier 1 (caption/context) stays when vision fails; both beat a dropped figure."""
-    for ch in chapters:
-        for im in ch["images"]:
+    jobs = [(ch, im) for ch in chapters for im in ch["images"]]
+
+    def do(job):
+        ch, im = job
+        try:
             p = img_dir / f"fig{im['n']}.{im['ext']}"
             desc = _describe(p.read_bytes(), im["caption"], im["context"]) if p.exists() else ""
+        except Exception as e:
+            print(f"fig{im['n']}: worker error {str(e)[:100]}")
+            desc = ""
+        return (im["n"], desc)
+
+    descs = {}
+    with cf.ThreadPoolExecutor(max_workers=config.VISION_WORKERS) as ex:
+        for n, desc in ex.map(do, jobs):
+            descs[n] = desc
+    for ch in chapters:
+        for im in ch["images"]:
+            desc = descs.get(im["n"], "")
             if desc:
                 im["desc"] = desc
                 for i, ln in enumerate(ch["lines"]):

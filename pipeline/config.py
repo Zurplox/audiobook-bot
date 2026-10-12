@@ -52,14 +52,17 @@ KILO_VISION_MODEL = "dots-studio/dots-3-note-preview:free"  # verified w/ key 20
 # Summarize fallback chain: (name, base, model, key, tries, waits_between_secs)
 # Order matters: quota-type errors jump to the next rung (never same-pool key).
 CHAIN = [
-    ("nim-glm", NIM_BASE, GLM_MODEL, NIM_API_KEY, 5, [30, 60, 120, 300]),
+    ("nim-glm", NIM_BASE, GLM_MODEL, NIM_API_KEY, 5, [15, 30, 60, 120]),
     ("kilo", KILO_BASE, KILO_MODEL, KILO_API_KEY, 3, [20, 20]),
     ("nim-ds", NIM_BASE, DS_MODEL, NIM_API_KEY_2, 10, [180] * 9),
     ("or-nemo", OR_BASE, OR_MODEL, OR_API_KEY, 3, [30, 30]),
 ]
 
 # --- pipeline limits ---
-CHUNK_CHARS = 10000          # max source chars per map chunk
+CHUNK_CHARS = 24000          # map chunk size (1M-ctx primary handles it easily)
+MAP_WORKERS = 5              # parallel map calls (~2-3 req/min vs per-min caps)
+REDUCE_WORKERS = 3           # parallel reduce calls (longer each)
+VISION_WORKERS = 3           # parallel figure descriptions
 CHARS_PER_MIN = 1080         # TS2 narration rate (measured)
 DEFAULT_MINUTES = 120
 MIN_MINUTES, MAX_MINUTES = 15, 240
@@ -74,7 +77,7 @@ VISION_IMG_MAX = 1024        # downscale longest side
 # Output budgets must fit reasoning trace + content: all chain models reason,
 # and a starved budget returns EMPTY content (13h lesson 2026-10-11: 0<min_len
 # on every rung). Map content need ~3.5k tokens max; reasoning takes ~3k.
-MAP_MAX_TOKENS = 10000
+MAP_MAX_TOKENS = 12000
 REDUCE_MAX_TOKENS = 12000
 TG_MAX_DOWNLOAD_MB = 20      # Telegram bot getFile cap
 STUCK_ALERT_CYCLES = 3       # consecutive stuck cycles before "manual look" alert

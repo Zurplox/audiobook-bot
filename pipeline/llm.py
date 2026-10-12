@@ -3,11 +3,14 @@ Quota-type errors jump to the next rung (pooled keys share limits).
 Garbage/truncation/transient errors retry in place, then fall through.
 Every success is length-validated (catches NIM's silent truncation)."""
 import json
+import threading
 import time
 import urllib.request
 import urllib.error
 
 from . import config
+
+_ANNOUNCE_LOCK = threading.Lock()
 
 QUOTA_HINTS = ("429", "rate", "quota", "limit", "credit", "balance", "402", "insufficient")
 
@@ -77,13 +80,19 @@ def call_chain(messages, max_tokens, min_len, tag="chunk", notified=None):
             if a < len(waits):
                 time.sleep(waits[a])
         # rung exhausted/abandoned without success -> next rung. Announce once.
-        if notified is not None and name not in notified and name in RUNG_NOTES:
-            notified.append(name)
-            print(f"{tag}: announcing {name} fallback")
-            try:
-                tg.send(RUNG_NOTES[name])
-            except Exception as e:
-                print(f"announce failed: {e}")
+        if notified is not None and name in RUNG_NOTES:
+            with _ANNOUNCE_LOCK:
+                if name not in notified:
+                    notified.append(name)
+                    announce = True
+                else:
+                    announce = False
+            if announce:
+                print(f"{tag}: announcing {name} fallback")
+                try:
+                    tg.send(RUNG_NOTES[name])
+                except Exception as e:
+                    print(f"announce failed: {e}")
     raise RuntimeError(f"all rungs failed for {tag}: {fail_counts}")
 
 

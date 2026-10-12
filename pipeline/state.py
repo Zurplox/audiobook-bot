@@ -10,6 +10,7 @@ def blank():
         "title": "", "author": "", "minutes": config.DEFAULT_MINUTES,
         "file_name": "", "queue": [], "noticed": [],
         "chunks": [], "chunks_done": {}, "script_chars": 0,
+        "chunk_chars": config.CHUNK_CHARS,
         "synth": {"done": [], "parts_sent": []},
         "fail_log": {}, "stuck": False, "cycles_failed": 0,
     }
