@@ -83,4 +83,4 @@ TG_MAX_DOWNLOAD_MB = 20      # Telegram bot getFile cap
 STUCK_ALERT_CYCLES = 3       # consecutive stuck cycles before "manual look" alert
 # Troubleshoot mode: Telegram message per chunk that needed any retry/fallback.
 # Silent on clean first-try chunks. Flip to False when done troubleshooting.
-CHUNK_SPAM = True
+CHUNK_SPAM = False
