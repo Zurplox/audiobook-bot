@@ -166,7 +166,11 @@ def run_phases(s):
                                           encoding="utf-8")
         s["phase"] = "vision_done"
     if s["phase"] == "vision_done":
-        tg.send("🧠 Summarization starting (target ~%d min)…" % s["minutes"])
+        banked = len(s.get("chunks_done", {}))
+        if banked:
+            tg.send(f"🧠 Resuming summarization — {banked} chunks already banked, continuing…")
+        else:
+            tg.send("🧠 Summarization starting (target ~%d min)…" % s["minutes"])
         chapters = json.loads((wd / "chapters.json").read_text(encoding="utf-8"))
         for ev in summarize.summarize(s, chapters, wd):
             state.save(s)
