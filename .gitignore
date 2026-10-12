@@ -1,7 +1,6 @@
 .env
 __pycache__/
 *.pyc
-state/
 work/
 *.mp3
 *.m4b

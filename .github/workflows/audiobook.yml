@@ -14,6 +14,11 @@ concurrency:
   group: audiobook-main
   cancel-in-progress: false
 
+# contents:write so the run can commit state.json checkpoints to the repo
+# (disaster-recovery copy; Actions cache stays primary).
+permissions:
+  contents: write
+
 jobs:
   run:
     runs-on: ubuntu-latest
