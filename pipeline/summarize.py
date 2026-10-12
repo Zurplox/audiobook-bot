@@ -70,7 +70,7 @@ def summarize(state, chapters, workdir):
             detail = " → ".join(f"{k}×{v}" for k, v in fails.items()) + f" → {rung} ok"
             tg.send(f"🧩 map-{c['id']}: {detail}")
         tick = (f"🧠 Summarizing — {done_n}/{total} chunks ({parts})"
-                if done_n % 5 == 0 or done_n == total else None)
+                if done_n % 20 == 0 or done_n == total else None)
         return (c["id"], rung, tick)
 
     with cf.ThreadPoolExecutor(max_workers=config.MAP_WORKERS) as ex:
