@@ -88,6 +88,12 @@ def synth_section(workdir, idx, heading, body):
     raise RuntimeError(f"TTS stuck on sec{idx}: {last}")
 
 
+def _esc(s):
+    """Escape FFMETADATA values (= ; # newline and backslash are control chars)."""
+    return (s.replace("\\", "\\\\").replace("=", "\\=").replace(";", "\\;")
+             .replace("#", "\\#").replace("\n", "\\\n"))
+
+
 def probe_dur(ffprobe, path):
     r = subprocess.run([ffprobe, "-v", "error", "-show_entries", "format=duration",
                         "-of", "csv=p=0", str(path)], capture_output=True, text=True)
@@ -102,11 +108,11 @@ def finalize_part(workdir, sec_idxs, headings, title, album, tag):
     mixed = workdir / f"mix-{tag}.mp3"
     mixed.write_bytes(b"".join(f.read_bytes() for f in files))
     durs = [probe_dur(probe, f) for f in files]
-    meta = [";FFMETADATA1", f"title={title}", f"album={album}"]
+    meta = [";FFMETADATA1", f"title={_esc(title)}", f"album={_esc(album)}"]
     t = 0
     for h, dur in zip(headings, durs):
         meta += ["[CHAPTER]", "TIMEBASE=1/1000", f"START={int(t * 1000)}",
-                 f"END={int((t + dur) * 1000)}", f"title={h[:120]}"]
+                 f"END={int((t + dur) * 1000)}", f"title={_esc(h[:120])}"]
         t += dur
     (workdir / f"ch-{tag}.txt").write_text("\n".join(meta) + "\n")
     m4b = workdir / f"part-{tag}.m4b"
