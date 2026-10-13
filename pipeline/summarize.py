@@ -39,8 +39,7 @@ def build_chunks(chapters, limit=None):
     return chunks
 
 
-def summarize(state, chapters, workdir):
-    """Runs map + reduce with per-unit checkpoints in state. Returns script md."""
+def _ensure_chunks(state, chapters):
     # In-flight books keep their original chunk size (else checkpoints wipe).
     cchars = state.get("chunk_chars", 10000)
     chunks = build_chunks(chapters, cchars)
@@ -48,6 +47,12 @@ def summarize(state, chapters, workdir):
         state["chunks"] = [{"id": c["id"], "ch": c["ch"]} for c in chunks]
         state["chunks_done"] = {}
     state["chunk_chars"] = cchars
+    return chunks
+
+
+def summarize_map(state, chapters):
+    """Map phase only (worker pool). Idempotent: skips finished chunks."""
+    chunks = _ensure_chunks(state, chapters)
     lock = threading.Lock()
     pending = [c for c in chunks if c["id"] not in state["chunks_done"]]
 
@@ -80,7 +85,12 @@ def summarize(state, chapters, workdir):
                 tg.send(tick)
             yield ("map", cid, rung)
 
-    # reduce per chapter (smaller pool — longer calls)
+
+def summarize_reduce(state, chapters, workdir):
+    """Reduce phase only (smaller pool) + script assembly. Idempotent."""
+    chunks = _ensure_chunks(state, chapters)
+    lock = threading.Lock()
+
     def do_reduce(job):
         ci, ch = job
         key = f"ch{ci}"
@@ -122,3 +132,9 @@ def summarize(state, chapters, workdir):
     state["script_chars"] = len(script)
     target = state["minutes"] * config.CHARS_PER_MIN
     print(f"script {len(script)} chars vs target ~{target} ({len(script)/target:.0%})")
+
+
+def summarize(state, chapters, workdir):
+    """Full map + reduce (local runs, back-compat). Workflow uses phases."""
+    yield from summarize_map(state, chapters)
+    yield from summarize_reduce(state, chapters, workdir)

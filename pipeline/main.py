@@ -85,9 +85,37 @@ def start_book(s, entry):
     print(f"started {book_id}: {entry['name']}, {s['minutes']} min")
 
 
-def run_phases(s):
+def _guard(s, phase):
+    """Phase preconditions: active book, right phase, no failure earlier this cycle."""
+    return s["book_id"] is not None and s["phase"] == phase and not s.get("stuck")
+
+
+def _ok(s):
+    s["stuck"] = False; s["cycles_failed"] = 0
+    state.save(s)
+
+
+def _fail(s, e):
+    print("STUCK:", str(e)[:300])
+    alert_stuck(s, str(e)[:200])
+    state.save(s)
+
+
+def phase_poll(s):
+    from . import llm
+    llm.health_check()  # log only, once per cycle — the chain handles failures
+    poll(s)
+    s["stuck"] = False  # fresh attempt each cycle; cycles_failed keeps history
+    state.save(s)
+    if s["book_id"] is None:
+        print("idle, offset", s["tg_offset"])
+
+
+def phase_extract(s):
+    if not _guard(s, "downloaded"):
+        return
     wd = config.WORK_DIR / s["book_id"]
-    if s["phase"] == "downloaded":
+    try:
         meta, chapters = extract.extract(wd / "book.epub", wd / "images")
         s["title"] = meta.get("title") or s["file_name"].rsplit(".", 1)[0]
         s["author"] = meta.get("creator", "")
@@ -98,7 +126,16 @@ def run_phases(s):
             ensure_ascii=False), encoding="utf-8")
         s["phase"] = "extracted"
         print(f"extracted {len(chapters)} chapters")
-    if s["phase"] == "extracted":
+        _ok(s)
+    except Exception as e:
+        _fail(s, e)
+
+
+def phase_vision(s):
+    if not _guard(s, "extracted"):
+        return
+    wd = config.WORK_DIR / s["book_id"]
+    try:
         tg.send("👁️ Reading %d figures for verbal description…"
                 % sum(len(c["images"]) for c in
                       json.loads((wd / "chapters.json").read_text(encoding="utf-8"))))
@@ -111,18 +148,50 @@ def run_phases(s):
         (wd / "chapters.json").write_text(json.dumps(chapters, ensure_ascii=False),
                                           encoding="utf-8")
         s["phase"] = "vision_done"
-    if s["phase"] == "vision_done":
+        _ok(s)
+    except Exception as e:
+        _fail(s, e)
+
+
+def phase_map(s):
+    if not _guard(s, "vision_done"):
+        return
+    wd = config.WORK_DIR / s["book_id"]
+    try:
         banked = len(s.get("chunks_done", {}))
         if banked:
             tg.send(f"🧠 Resuming summarization — {banked} chunks already banked, continuing…")
         else:
             tg.send("🧠 Summarization starting (target ~%d min)…" % s["minutes"])
         chapters = json.loads((wd / "chapters.json").read_text(encoding="utf-8"))
-        for ev in summarize.summarize(s, chapters, wd):
+        for ev in summarize.summarize_map(s, chapters):
+            state.save(s)
+            print("progress:", ev)
+        _ok(s)
+    except Exception as e:
+        _fail(s, e)
+
+
+def phase_reduce(s):
+    if not _guard(s, "vision_done"):
+        return
+    wd = config.WORK_DIR / s["book_id"]
+    try:
+        chapters = json.loads((wd / "chapters.json").read_text(encoding="utf-8"))
+        for ev in summarize.summarize_reduce(s, chapters, wd):
             state.save(s)
             print("progress:", ev)
         s["phase"] = "summarized"
-    if s["phase"] == "summarized":
+        _ok(s)
+    except Exception as e:
+        _fail(s, e)
+
+
+def phase_synth(s):
+    if not _guard(s, "summarized"):
+        return
+    wd = config.WORK_DIR / s["book_id"]
+    try:
         tg.send("🎙️ Script ready — synthesizing audio, part 1 coming next…")
         md = (wd / "script.md").read_text(encoding="utf-8-sig")
         sections = synth.split_sections(md)
@@ -131,6 +200,23 @@ def run_phases(s):
             state.save(s)
             print("progress:", ev)
         s["phase"] = "done"
+        _ok(s)
+        finish(s)
+        state.save(s)
+    except Exception as e:
+        _fail(s, e)
+
+
+PHASES = {"poll": phase_poll, "extract": phase_extract, "vision": phase_vision,
+          "map": phase_map, "reduce": phase_reduce, "synth": phase_synth}
+
+
+def run_phases(s):
+    """Full run (local use). Workflow calls phases as separate steps."""
+    for name in ("poll", "extract", "vision", "map", "reduce", "synth"):
+        PHASES[name](s)
+        if s["book_id"] is None:
+            return
 
 
 def finish(s):
@@ -164,28 +250,25 @@ def alert_stuck(s, reason):
     print(msg)
 
 
-def main():
+def main(which="all"):
     s = state.load()
-    print("health:", end=" ")
-    from . import llm
-    llm.health_check()  # log only — the chain itself handles failures
-    poll(s)
-    state.save(s)
-    if s["book_id"] is None:
-        print("idle, offset", s["tg_offset"])
-        return
-    try:
+    if which == "all":
+        print("health:", end=" ")
+        from . import llm
+        llm.health_check()  # log only — the chain itself handles failures
+        poll(s)
+        state.save(s)
+        if s["book_id"] is None:
+            print("idle, offset", s["tg_offset"])
+            return
         run_phases(s)
-        s["stuck"] = False; s["cycles_failed"] = 0
+    elif which in PHASES:
+        PHASES[which](s)
         state.save(s)
-        if s["phase"] == "done":
-            finish(s)
-            state.save(s)
-    except Exception as e:
-        print("STUCK:", str(e)[:300])
-        alert_stuck(s, str(e)[:200])
-        state.save(s)
+    else:
+        print(f"unknown phase '{which}' — use: poll|extract|vision|map|reduce|synth|all")
+        sys.exit(2)
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1] if len(sys.argv) > 1 else "all")

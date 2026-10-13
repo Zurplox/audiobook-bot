@@ -43,7 +43,15 @@ jobs:
             work
           key: audiobook-state-${{ github.run_id }}
           restore-keys: audiobook-state-
-      - run: python -m pipeline.main
+      # One step per phase: live progress in the browser (completed/in_progress
+      # per phase) instead of one opaque block. Each step is idempotent and
+      # exits 0 (failures become Telegram stuck-alerts, retried next cycle).
+      - run: python -m pipeline.main poll
+      - run: python -m pipeline.main extract
+      - run: python -m pipeline.main vision
+      - run: python -m pipeline.main map
+      - run: python -m pipeline.main reduce
+      - run: python -m pipeline.main synth
       - uses: actions/cache/save@v4
         if: always()
         with:
