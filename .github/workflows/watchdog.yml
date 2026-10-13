@@ -1,0 +1,48 @@
+name: watchdog
+
+# Safety net for stillborn runs (e.g. 38338431146: dead in 10s during runner
+# setup, before our code loads). If the latest audiobook run died fast, dispatch
+# a replacement instead of waiting for the next schedule tick. Strictly capped:
+# exactly one auto-retry per failure, never on consecutive failures (those need
+# a human), never while anything is running.
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  actions: read
+  actions: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: retry fast-dead run once
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          REPO="${{ github.repository }}"
+          mapfile -t RUNS < <(gh api "repos/$REPO/actions/runs?per_page=4" \
+            --jq '.workflow_runs[] | select(.name=="audiobook") | [.id,.status,.conclusion,.updated_at] | @tsv')
+          [ "${#RUNS[@]}" -eq 0 ] && { echo "no runs"; exit 0; }
+          IFS=$'\t' read -r ID STATUS CONCL UPDATED <<< "${RUNS[0]}"
+          [ "$STATUS" != "completed" ] && { echo "latest $ID still $STATUS — hands off"; exit 0; }
+          [ "$CONCL" != "failure" ] && { echo "latest $ID is $CONCL — nothing to do"; exit 0; }
+          # Job-level duration (run wall-clock includes queue time — misleading).
+          read -r JSTART JEND <<< $(gh api "repos/$REPO/actions/runs/$ID/jobs" \
+            --jq '.jobs[0] | "\(.started_at) \(.completed_at)"')
+          [ -z "$JSTART" ] || [ -z "$JEND" ] || [ "$JSTART" == "null" ] || [ "$JEND" == "null" ] \
+            && { echo "latest $ID has no job timing — hands off"; exit 0; }
+          DUR=$(( $(date -d "$JEND" +%s) - $(date -d "$JSTART" +%s) ))
+          [ "$DUR" -ge 600 ] && { echo "latest $ID ran ${DUR}s — real attempt, not stillborn"; exit 0; }
+          AGE=$(( $(date -u +%s) - $(date -d "$UPDATED" +%s) ))
+          [ "$AGE" -gt 3600 ] && { echo "latest $ID failed over an hour ago — schedule owns recovery"; exit 0; }
+          STRIKES=0
+          for r in "${RUNS[@]}"; do
+            IFS=$'\t' read -r _ S C _ <<< "$r"
+            [ "$S" == "completed" ] && [ "$C" == "failure" ] && STRIKES=$((STRIKES+1)) || break
+          done
+          [ "$STRIKES" -ge 2 ] && { echo "$STRIKES consecutive failures — human needed"; exit 0; }
+          echo "stillborn $ID (job lived ${DUR}s) — dispatching one replacement"
+          gh workflow run audiobook --repo "$REPO" --ref main
