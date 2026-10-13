@@ -291,7 +291,8 @@ def alert_stuck(s, reason):
     s["stuck"] = True
     s["cycles_failed"] = s.get("cycles_failed", 0) + 1
     fails = s.get("fail_log", {})
-    detail = ", ".join(f"{k}: {v} fails" for k, v in fails.items()) or reason
+    counts = ", ".join(f"{k}: {v} fails" for k, v in fails.items())
+    detail = reason + (f" [{counts}]" if counts else "")
     msg = (f"⚠️ '{s['title']}' stuck at phase {s['phase']} — {detail}. "
            f"State saved, auto-resume on next cycle (stuck x{s['cycles_failed']}).")
     if s["cycles_failed"] >= config.STUCK_ALERT_CYCLES:
