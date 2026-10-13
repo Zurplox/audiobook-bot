@@ -87,9 +87,22 @@ def summarize_map(state, chapters):
 
 
 def summarize_reduce(state, chapters, workdir):
-    """Reduce phase only (smaller pool) + script assembly. Idempotent."""
+    """Reduce phase only (smaller pool) + script assembly. Idempotent.
+    Global length budget: per-chapter target derived from total minutes, so the
+    assembled script lands near target instead of preserving every fragment."""
     chunks = _ensure_chunks(state, chapters)
     lock = threading.Lock()
+    total_target = state.get("minutes", config.DEFAULT_MINUTES) * config.CHARS_PER_MIN
+    per_ch = max(300, total_target // max(1, len(chapters)))
+    max_ch = max(1500, per_ch * 4)
+    words = max(60, per_ch // 5)
+    # retroactive: chapters done by unbudgeted runs get redone, not kept
+    _done = state.get("chapters_done", {})
+    redone = [k for k, v in _done.items() if len(v) > max_ch]
+    for k in redone:
+        del _done[k]
+    if redone:
+        print(f"{len(redone)} chapters over budget (>{max_ch} chars) — redoing")
 
     def do_reduce(job):
         ci, ch = job
@@ -98,10 +111,11 @@ def summarize_reduce(state, chapters, workdir):
         msgs = [{"role": "system", "content": REDUCE_SYS},
                 {"role": "user", "content":
                  f"Turn these summaries of the chapter '{ch['title']}' into flowing "
-                 f"narration:\n\n{src}"}]
+                 f"narration of about {words} words:\n\n{src}"}]
         out, rung, fails = llm.call_chain(
             msgs, max_tokens=config.REDUCE_MAX_TOKENS,
-            min_len=max(400, len(src) // 8), tag=f"reduce-{key}",
+            min_len=max(150, min(400, len(src) // 8)), max_len=max_ch,
+            tag=f"reduce-{key}",
             notified=state.setdefault("notified_rungs", []))
         with lock:
             state.setdefault("chapters_done", {})[key] = out

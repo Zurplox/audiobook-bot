@@ -94,24 +94,24 @@ def probe_dur(ffprobe, path):
     return float(r.stdout.strip())
 
 
-def finalize_part(workdir, sec_idxs, headings, title, album, part_n, total_hint=""):
-    """Concat sec mp3s -> chaptered m4b. Returns (m4b_path, minutes)."""
+def finalize_part(workdir, sec_idxs, headings, title, album, tag):
+    """Concat sec mp3s -> chaptered m4b. Returns (m4b_path, minutes).
+    tag names the files (caller numbers parts at send time)."""
     ff, probe = find_ffmpeg()
     files = [workdir / f"sec{i}.mp3" for i in sec_idxs]
-    mixed = workdir / f"part{part_n}-mixed.mp3"
+    mixed = workdir / f"mix-{tag}.mp3"
     mixed.write_bytes(b"".join(f.read_bytes() for f in files))
     durs = [probe_dur(probe, f) for f in files]
-    meta = [";FFMETADATA1", f"title={title} — Part {part_n}{total_hint}",
-            f"album={album}", f"track={part_n}"]
+    meta = [";FFMETADATA1", f"title={title}", f"album={album}"]
     t = 0
     for h, dur in zip(headings, durs):
         meta += ["[CHAPTER]", "TIMEBASE=1/1000", f"START={int(t * 1000)}",
                  f"END={int((t + dur) * 1000)}", f"title={h[:120]}"]
         t += dur
-    (workdir / f"part{part_n}-chapters.txt").write_text("\n".join(meta) + "\n")
-    m4b = workdir / f"part{part_n}.m4b"
+    (workdir / f"ch-{tag}.txt").write_text("\n".join(meta) + "\n")
+    m4b = workdir / f"part-{tag}.m4b"
     r = subprocess.run([ff, "-y", "-i", str(mixed),
-                        "-i", str(workdir / f"part{part_n}-chapters.txt"),
+                        "-i", str(workdir / f"ch-{tag}.txt"),
                         "-map_metadata", "1", "-c:a", "aac", "-b:a", "128k",
                         str(m4b)], capture_output=True, text=True)
     if not m4b.exists() or r.returncode != 0:

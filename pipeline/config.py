@@ -70,7 +70,9 @@ MAP_MIN_RATIO = 10           # map summary must be >= len(chunk)/10 and >= 300 c
 MAP_MIN_ABS = 300
 TG_MAX_UPLOAD_MB = 50        # Telegram bot hard cap
 PART_MAX_MB = 40             # our target ceiling (headroom under the cap)
-EST_BYTES_PER_CHAR = 1.0     # synth size estimate (conservative)
+EST_BYTES_PER_CHAR = 1000.0  # synth size estimate: ~889 real (1080 chars/min
+                             # at 128kbit) — was 1.0, a 1000x underestimate that
+                             # disabled part-splitting entirely (2026-10-13)
 MAX_SECTION_CHARS = 60000    # bigger sections pre-split (guard, rarely triggers)
 VISION_TRIES = 3
 VISION_IMG_MAX = 1024        # downscale longest side

@@ -8,6 +8,9 @@ on:
       minutes:
         description: "Target minutes when the caption has no number"
         default: "120"
+      restore_key:
+        description: "Exact cache key to resume from (blank = latest)"
+        default: ""
 
 # One book at a time: overlapping runs queue instead of running in parallel.
 concurrency:
@@ -42,7 +45,7 @@ jobs:
           path: |
             state
             work
-          key: audiobook-state-${{ github.run_id }}
+          key: ${{ inputs.restore_key || format('audiobook-state-{0}', github.run_id) }}
           restore-keys: audiobook-state-
       # One step per phase: live progress in the browser (completed/in_progress
       # per phase) instead of one opaque block. Each step is idempotent and

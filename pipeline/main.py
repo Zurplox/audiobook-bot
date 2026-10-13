@@ -271,6 +271,8 @@ def run_phases(s):
 
 def finish(s):
     parts = s["synth"]["parts_sent"]
+    if any(p.get("mb", 0) > config.TG_MAX_UPLOAD_MB for p in parts):
+        raise RuntimeError("oversize part recorded — refusing false completion")
     total = sum(p["mins"] for p in parts)
     tg.send(f"✅ '{s['title']}' complete — {len(parts)} part(s), {total:.0f} min total.")
     wd = config.WORK_DIR / s["book_id"]

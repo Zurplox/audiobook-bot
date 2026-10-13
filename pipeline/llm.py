@@ -47,9 +47,10 @@ def _is_quota(err_text):
     return any(h in low for h in QUOTA_HINTS)
 
 
-def call_chain(messages, max_tokens, min_len, tag="chunk", notified=None):
+def call_chain(messages, max_tokens, min_len, tag="chunk", notified=None, max_len=None):
     """Returns (text, rung_used, fail_counts). Raises RuntimeError if all rungs fail.
-    notified: persistent list (in state) — each rung announces once per book."""
+    notified: persistent list (in state) — each rung announces once per book.
+    max_len: optional ceiling — overlong outputs retry like failures (length budget)."""
     from . import tg  # late import: avoids cycle at module load
     fail_counts = {}
     for name, base, model, key, tries, waits in config.CHAIN:
@@ -59,11 +60,14 @@ def call_chain(messages, max_tokens, min_len, tag="chunk", notified=None):
         for a in range(tries):
             try:
                 out = _text_of(_post(base, model, key, messages, max_tokens))
-                if len(out) >= min_len:
+                fits = len(out) >= min_len and (max_len is None or len(out) <= max_len)
+                if fits:
                     if a or fail_counts:
                         print(f"{tag}: {name} ok after {fail_counts}")
                     return out, name, fail_counts
-                print(f"{tag}: {name} short output ({len(out)}<{min_len}), attempt {a + 1}/{tries}")
+                bounds = f">={min_len}" + (f",<={max_len}" if max_len else "")
+                print(f"{tag}: {name} rejected output ({len(out)} chars, need {bounds}), "
+                      f"attempt {a + 1}/{tries}")
             except urllib.error.HTTPError as e:
                 detail = f"HTTP {e.code} " + e.read()[:200].decode("utf-8", "ignore")
                 print(f"{tag}: {name} {detail[:120]}, attempt {a + 1}/{tries}")
