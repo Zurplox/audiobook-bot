@@ -23,6 +23,9 @@ Telegram is the entire UI: send an `.epub` to the bot, receive `.m4b` parts back
   synth+deliver loop. Every phase checkpoints to `state/state.json`, which
   persists across runs via the Actions cache. A crashed run resumes mid-book:
   finished sections are skipped, sent parts are never re-sent.
+- Length discipline (all rewrite-based, never truncation): sub-800-char spine
+  fragments merge at extract (titles kept as subheadings); per-chapter budgets
+  with retry-on-overlong; global condense backstop if the total tops 130%.
 - `.github/workflows/audiobook.yml` — schedule + manual dispatch.
 - `.github/workflows/cleanup.yml` — weekly prune (caches, stray binaries).
   Artifacts self-expire (`retention-days: 7`); Telegram chat is the archive.

@@ -31,6 +31,54 @@ REDUCE_SYS = ("You assemble chapter summaries into flowing audiobook narration. 
               "no markdown headings, no intro, no closing sentence.")
 
 
+CONDENSE_SYS = ("You compress chapter narrations to a strict length budget. "
+                "Simple plain language for listening. Keep every key idea, example "
+                "and number — rewrite tighter, never drop content and never truncate. "
+                "Expressive delivery through words and punctuation. Plain paragraphs "
+                "only, no markdown headings, no intro, no closing sentence.")
+
+
+def _condense(state, parts, target):
+    """Backstop: total over budget -> regroup narrations and re-summarize each
+    group down to target share. Rewriting, never truncation. Checkpointed.
+    Generator: yields progress events, returns the condensed parts list."""
+    n = len(parts)
+    G = min(config.CONDENSE_GROUPS, max(1, n))
+    per_group = max(400, target // G)
+    # balanced groups by chars
+    groups, cur, curlen = [], [], 0
+    want_each = sum(len(t) for _, t in parts) / G
+    for h, t in parts:
+        cur.append((h, t)); curlen += len(t)
+        if len(groups) < G - 1 and curlen >= want_each:
+            groups.append(cur); cur, curlen = [], 0
+    if cur:
+        groups.append(cur)
+    stored = state.setdefault("condensed", {})
+    tg.send(f"📝 Total over budget — condensing {n} chapters into {len(groups)} "
+            f"parts (~{target} chars)…")
+    out = []
+    for gi, g in enumerate(groups):
+        key = f"g{gi}"
+        if key in stored and len(stored[key]) <= int(per_group * 1.2):
+            out.append((g[0][0], stored[key]))
+            continue
+        src = "\n\n".join(t for _, t in g)
+        words = max(80, per_group // 5)
+        msgs = [{"role": "system", "content": CONDENSE_SYS},
+                {"role": "user", "content":
+                 f"Compress the following narration to about {words} words:\n\n{src}"}]
+        text, rung, fails = llm.call_chain(
+            msgs, max_tokens=8000, min_len=max(200, per_group // 4),
+            max_len=per_group, tag=f"condense-{key}",
+            notified=state.setdefault("notified_rungs", []))
+        stored[key] = text
+        state["fail_log"] = fails
+        out.append((g[0][0], text))
+        yield ("condense", key, rung)
+    return out
+
+
 def build_chunks(chapters, limit=None):
     chunks = []
     for ci, ch in enumerate(chapters):
@@ -138,18 +186,24 @@ def summarize_reduce(state, chapters, workdir):
             yield ("reduce", f"ch{ci}", rung)
 
     narrations = {ci: state["chapters_done"][f"ch{ci}"] for ci in range(len(chapters))}
+    target = state.get("minutes", config.DEFAULT_MINUTES) * config.CHARS_PER_MIN
+
+    parts = [(chapters[ci]["title"], narrations[ci]) for ci in range(len(chapters))]
+    total = sum(len(t) for _, t in parts)
+    if total > target * config.CONDENSE_OVER:
+        parts = yield from _condense(state, parts, target)
+        total = sum(len(t) for _, t in parts)
 
     title, author = state["title"], state["author"]
     md = [f"# {title} — {author}".strip(" —"), ""]
-    for ci, ch in enumerate(chapters):
-        md += [f"## {ch['title']}", "", narrations[ci].strip(), ""]
+    for h, t in parts:
+        md += [f"## {h}", "", t.strip(), ""]
     md += ["## The last word", "",
            f"That is the heart of {title}. Take one idea from it and use it this week. "
            f"Small steps, repeated, is how every lasting change is built.", ""]
     script = "\n".join(md)
     (workdir / "script.md").write_text(script, encoding="utf-8")
     state["script_chars"] = len(script)
-    target = state["minutes"] * config.CHARS_PER_MIN
     print(f"script {len(script)} chars vs target ~{target} ({len(script)/target:.0%})")
 
 

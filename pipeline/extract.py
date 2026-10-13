@@ -10,6 +10,8 @@ from bs4 import XMLParsedAsHTMLWarning
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 from PIL import Image
 
+from . import config
+
 BLOCK = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "figcaption",
          "dt", "dd", "pre"}
 DECORATIVE_NAMES = ("cover", "title", "logo", "divider", "spacer", "ornament",
@@ -55,6 +57,29 @@ def _parse_opf(z, opf_path):
                 manifest[item.attrib.get("id", item.attrib["href"])] = (
                     base + item.attrib["href"], item.attrib.get("media-type", ""))
     return meta, manifest, spine
+
+
+def _merge_fragments(chapters):
+    """Fold sub-threshold fragments into the running group (page-split epubs
+    emit hundreds of one-paragraph 'chapters'). Folded titles are kept as ###
+    subheadings; figure markers and images ride along untouched. All text is
+    still read and summarized — regrouped, never dropped."""
+    under = config.MERGE_UNDER_CHARS
+    def size(ch):
+        return sum(len(ln) for ln in ch["lines"])
+    merged = []
+    for ch in chapters:
+        g = merged[-1] if merged else None
+        if g is not None and (size(g) < under or size(ch) < under) \
+                and size(g) < config.MERGE_MAX_CHARS:
+            if ch["title"] and ch["title"] != g["title"]:
+                g["lines"].append("### " + ch["title"])
+            g["lines"].extend(ch["lines"])
+            g["images"].extend(ch["images"])
+        else:
+            merged.append({"title": ch["title"], "lines": list(ch["lines"]),
+                           "images": list(ch["images"])})
+    return merged
 
 
 def _clean_line(s):
@@ -180,7 +205,9 @@ def extract(epub_path, img_dir):
             title = href.rsplit("/", 1)[-1].rsplit(".", 1)[0].replace("_", " ").title()
         chapters.append({"title": title, "lines": lines, "images": images})
     z.close()
-    return meta, chapters
+    merged = _merge_fragments(chapters)
+    print(f"extract: {len(chapters)} spine items -> {len(merged)} chapters")
+    return meta, merged
 
 
 def chunks_from_lines(lines, limit):

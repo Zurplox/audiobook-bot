@@ -60,6 +60,10 @@ CHAIN = [
 
 # --- pipeline limits ---
 CHUNK_CHARS = 24000          # map chunk size (1M-ctx primary handles it easily)
+MERGE_UNDER_CHARS = 800      # spine fragments below this fold into neighbours
+MERGE_MAX_CHARS = 120000     # ...but groups never exceed this (context safety)
+CONDENSE_OVER = 1.3          # total past this x target triggers condense backstop
+CONDENSE_GROUPS = 20         # condense target group count
 MAP_WORKERS = 5              # parallel map calls (~2-3 req/min vs per-min caps)
 REDUCE_WORKERS = 3           # parallel reduce calls (longer each)
 VISION_WORKERS = 3           # parallel figure descriptions
