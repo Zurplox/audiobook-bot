@@ -26,6 +26,8 @@ def _budget_allows(s, what):
     try:
         if os.environ.get("GITHUB_ACTIONS") != "true":
             return True
+        if not config.BUDGET_ENFORCE:
+            return True  # public repo: minutes unlimited, counter runs only
         used = s.get("minutes_used", 0)
         if used >= config.BUDGET_PAUSE:
             if not s.get("budget_paused"):

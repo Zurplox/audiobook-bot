@@ -81,10 +81,10 @@ MAP_MAX_TOKENS = 12000
 REDUCE_MAX_TOKENS = 12000
 TG_MAX_DOWNLOAD_MB = 20      # Telegram bot getFile cap
 STUCK_ALERT_CYCLES = 3       # consecutive stuck cycles before "manual look" alert
-# Spend guard (free private quota = 2000 min/month). Approximate self-meter:
-# each Actions run adds its wall minutes; warn once at WARN, pause heavy work
-# (intake/extract/vision/map/reduce/synth) at PAUSE. Polling + queueing always
-# allowed (cheap, lossless). Resets monthly. Local runs never counted.
+# Spend guard (free PRIVATE quota = 2000 min/month). MOOT on public repos
+# (minutes unlimited) — BUDGET_ENFORCE=False disables gating while keeping the
+# counter running for visibility. Re-enable if the repo ever goes private again.
+BUDGET_ENFORCE = False
 BUDGET_WARN = 1500
 BUDGET_PAUSE = 1800
 BUDGET_CAP = 2000
