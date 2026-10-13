@@ -42,6 +42,8 @@ def deliver(state, workdir, sections):
             done.add(idx)
             state["synth"]["done"] = sorted(done)
             yield ("synth", idx)
+            if (idx + 1) % 25 == 0:
+                tg.send(f"🎙️ Synthesizing — {idx + 1}/{len(sections)} sections")
         est = int(len(h + b) * config.EST_BYTES_PER_CHAR)
         if cur and cur_bytes + est > config.PART_MAX_MB * 1024 * 1024:
             flush()

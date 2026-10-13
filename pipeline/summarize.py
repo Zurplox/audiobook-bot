@@ -106,16 +106,21 @@ def summarize_reduce(state, chapters, workdir):
         with lock:
             state.setdefault("chapters_done", {})[key] = out
             state["fail_log"] = fails
+            rn, rtotal = len(state["chapters_done"]), len(chapters)
         if config.CHUNK_SPAM and fails:
             detail = " → ".join(f"{k}×{v}" for k, v in fails.items()) + f" → {rung} ok"
             tg.send(f"🧩 reduce-{key}: {detail}")
-        return (ci, rung)
+        rtick = (f"📝 Assembling — {rn}/{rtotal} chapters"
+                 if rn % 20 == 0 or rn == rtotal else None)
+        return (ci, rung, rtick)
 
     jobs = [(ci, ch) for ci, ch in enumerate(chapters)
             if f"ch{ci}" not in state.get("chapters_done", {})]
     with cf.ThreadPoolExecutor(max_workers=config.REDUCE_WORKERS) as ex:
         for fut in cf.as_completed([ex.submit(do_reduce, j) for j in jobs]):
-            ci, rung = fut.result()
+            ci, rung, rtick = fut.result()
+            if rtick:
+                tg.send(rtick)
             yield ("reduce", f"ch{ci}", rung)
 
     narrations = {ci: state["chapters_done"][f"ch{ci}"] for ci in range(len(chapters))}
