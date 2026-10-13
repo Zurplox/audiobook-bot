@@ -6,8 +6,42 @@ import os
 import re
 import shutil
 import sys
+import time
 
 from . import config, state, tg, extract, vision, summarize, synth, deliver
+
+
+def _roll_month(s):
+    month = time.strftime("%Y-%m")
+    if s.get("minutes_month") != month:
+        s["minutes_month"] = month
+        s["minutes_used"] = 0
+        s["budget_warned"] = False
+        s["budget_paused"] = False
+
+
+def _budget_allows(s, what):
+    """Spend guard: warn once at BUDGET_WARN, pause heavy work at BUDGET_PAUSE.
+    Polling/queueing always allowed. Actions-only accounting. Never raises."""
+    try:
+        if os.environ.get("GITHUB_ACTIONS") != "true":
+            return True
+        used = s.get("minutes_used", 0)
+        if used >= config.BUDGET_PAUSE:
+            if not s.get("budget_paused"):
+                s["budget_paused"] = True
+                tg.send(f"⛽ Actions budget nearly out ({used:.0f} min used this month) — "
+                        f"heavy work paused, new books queue safely. Resumes next month.")
+                state.save(s)
+            print(f"budget paused ({used:.0f} min) — skipping {what}")
+            return False
+        if used >= config.BUDGET_WARN and not s.get("budget_warned"):
+            s["budget_warned"] = True
+            tg.send(f"⛽ Actions budget at {used:.0f}/{config.BUDGET_CAP} min this month.")
+            state.save(s)
+    except Exception as e:
+        print("budget check skipped:", str(e)[:100])
+    return True
 
 
 def parse_minutes(caption):
@@ -52,7 +86,11 @@ def handle_update(s, u):
              "caption": (msg.get("caption") or ""),
              "override": os.environ.get("MINUTES_OVERRIDE", "")}
     if s["book_id"] is None:
-        start_book(s, entry)
+        if _budget_allows(s, "intake"):
+            start_book(s, entry)
+        else:
+            s["queue"].append(entry)  # wait for next month, lossless
+            tg.send(f"📥 '{name}' queued — budget paused, starts next month.")
     elif len(s["queue"]) < 5:
         s["queue"].append(entry)
         tg.send(f"📥 '{name}' queued — current book finishes first.")
@@ -114,6 +152,8 @@ def phase_poll(s):
 def phase_extract(s):
     if not _guard(s, "downloaded"):
         return
+    if not _budget_allows(s, "extract"):
+        return
     wd = config.WORK_DIR / s["book_id"]
     try:
         meta, chapters = extract.extract(wd / "book.epub", wd / "images")
@@ -133,6 +173,8 @@ def phase_extract(s):
 
 def phase_vision(s):
     if not _guard(s, "extracted"):
+        return
+    if not _budget_allows(s, "vision"):
         return
     wd = config.WORK_DIR / s["book_id"]
     try:
@@ -156,6 +198,8 @@ def phase_vision(s):
 def phase_map(s):
     if not _guard(s, "vision_done"):
         return
+    if not _budget_allows(s, "map"):
+        return
     wd = config.WORK_DIR / s["book_id"]
     try:
         banked = len(s.get("chunks_done", {}))
@@ -175,6 +219,8 @@ def phase_map(s):
 def phase_reduce(s):
     if not _guard(s, "vision_done"):
         return
+    if not _budget_allows(s, "reduce"):
+        return
     wd = config.WORK_DIR / s["book_id"]
     try:
         chapters = json.loads((wd / "chapters.json").read_text(encoding="utf-8"))
@@ -189,6 +235,8 @@ def phase_reduce(s):
 
 def phase_synth(s):
     if not _guard(s, "summarized"):
+        return
+    if not _budget_allows(s, "synth"):
         return
     wd = config.WORK_DIR / s["book_id"]
     try:
@@ -251,23 +299,31 @@ def alert_stuck(s, reason):
 
 
 def main(which="all"):
+    t0 = time.time()
     s = state.load()
-    if which == "all":
-        print("health:", end=" ")
-        from . import llm
-        llm.health_check()  # log only — the chain itself handles failures
-        poll(s)
-        state.save(s)
-        if s["book_id"] is None:
-            print("idle, offset", s["tg_offset"])
-            return
-        run_phases(s)
-    elif which in PHASES:
-        PHASES[which](s)
-        state.save(s)
-    else:
-        print(f"unknown phase '{which}' — use: poll|extract|vision|map|reduce|synth|all")
-        sys.exit(2)
+    _roll_month(s)
+    try:
+        if which == "all":
+            print("health:", end=" ")
+            from . import llm
+            llm.health_check()  # log only — the chain itself handles failures
+            poll(s)
+            state.save(s)
+            if s["book_id"] is None:
+                print("idle, offset", s["tg_offset"])
+                return
+            run_phases(s)
+        elif which in PHASES:
+            PHASES[which](s)
+            state.save(s)
+        else:
+            print(f"unknown phase '{which}' — use: poll|extract|vision|map|reduce|synth|all")
+            sys.exit(2)
+    finally:
+        # Self-meter: approximate billed minutes (Actions only; local runs free).
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            s["minutes_used"] = s.get("minutes_used", 0) + (time.time() - t0) / 60
+            state.save(s)
 
 
 if __name__ == "__main__":
