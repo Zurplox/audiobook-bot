@@ -202,7 +202,9 @@ def extract(epub_path, img_dir):
         if not lines:
             continue
         if not title:
-            title = href.rsplit("/", 1)[-1].rsplit(".", 1)[0].replace("_", " ").title()
+            # Filename fallback is always junk on page-split epubs ("Page 0001"
+            # — narrated aloud by TTS). A real number is honest: "Chapter 3".
+            title = f"Chapter {len(chapters) + 1}"
         chapters.append({"title": title, "lines": lines, "images": images})
     z.close()
     merged = _merge_fragments(chapters)

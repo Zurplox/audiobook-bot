@@ -49,6 +49,21 @@ def split_sections(md):
     return fixed
 
 
+_JUNK_HEADING = re.compile(r"(?i)^(page|part|section)\W*[0-9ivxlc]+\s*$|^0+[0-9]{2,}\s*$")
+
+
+def _spoken(heading, body):
+    """Text actually sent to TTS. Junk headings (page-split artifacts like
+    'Page 0001') and synthetic '(cont.)' sections stay silent; real chapter
+    titles ('Chapter 3', real names) are spoken as chapter starts."""
+    h = heading.strip()
+    if h.endswith("(cont.)"):
+        return body.strip()  # split-section continuation: heading already spoken
+    if not h or _JUNK_HEADING.match(h):
+        return body.strip()
+    return (h + ". " + body.strip()).strip()
+
+
 def _tts_call(text, out_path):
     text = re.sub(r"\s+", " ", text.replace("#", "").replace("*", "")
                   .replace("_", "").replace("`", "").replace(">", " ")).strip()
@@ -68,7 +83,7 @@ def synth_section(workdir, idx, heading, body):
     f = workdir / f"sec{idx}.mp3"
     if f.exists() and f.stat().st_size > 1000:
         return f
-    text = (heading + ". " + body).strip()
+    text = _spoken(heading, body)
     last = ""
     for a in range(TTS_TRIES):
         try:
